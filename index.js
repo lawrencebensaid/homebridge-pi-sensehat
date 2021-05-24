@@ -1,11 +1,13 @@
 'use strict';
 
 const { exec } = require("child_process");
+const { sync: hat } = require("sense-hat-led");
 
 let Service, Characteristic, CommunityTypes;
-let power, brightness, saturation, hue;
+let blinker, blink, power, brightness, saturation, hue;
 let temperature, humidity, pressure;
-let path;
+let path, useBlinker;
+let ledPanel, color;
 
 const DEFAULT_PATH = "/usr/lib/node_modules/homebridge-pi-sensehat";
 
@@ -22,13 +24,59 @@ class SenseHatLight {
     this.log = log;
     this.name = config.name || this.name;
     path = config.path || DEFAULT_PATH;
+    useBlinker = !!config.blinker;
 
-    hue = 360;
+    hue = 0;
     brightness = 100;
     saturation = 100;
-    power = 1;
+    power = true;
 
-    setLEDPanel(log);
+    ledPanel = new LEDPanel(hat);
+
+    (async () => {
+      color = Color.magenta;
+      const sleep = async (x) => new Promise(resolve => setTimeout(resolve, x));
+      for (const x of [...Array(7).keys()]) {
+        ledPanel.setPixel(x, 0, color);
+        await sleep(100);
+      }
+      for (const x of [...Array(7).keys()]) {
+        ledPanel.setPixel(7, x, color);
+        await sleep(100);
+      }
+      for (const x of [...Array(7).keys()].reverse()) {
+        ledPanel.setPixel(x, 7, color);
+        await sleep(100);
+      }
+      for (const x of [...Array(7).keys()].reverse()) {
+        ledPanel.setPixel(0, x, color);
+        await sleep(100);
+      }
+      ledPanel.off();
+      await sleep(500);
+      ledPanel.fill(Color.green);
+      await sleep(500);
+      ledPanel.off();
+      await sleep(500);
+      ledPanel.fill(Color.green);
+      await sleep(500);
+      ledPanel.off();
+      await sleep(500);
+      ledPanel.fill(Color.green);
+      await sleep(500);
+      ledPanel.off();
+    })();
+
+    if (useBlinker) {
+
+      this.blinkerService = new Service.Switch(this.name);
+
+      this.blinkerService
+        .getCharacteristic(Characteristic.On)
+        .on("get", this.getBlinker.bind(this))
+        .on("set", this.setBlinker.bind(this));
+
+    }
 
     this.ledsService = new Service.Lightbulb(this.name);
 
@@ -54,68 +102,81 @@ class SenseHatLight {
 
   }
 
+  async setBlinker(state, cb) {
+    ledPanel.blink(state);
+    cb(null, ledPanel.isBlinking);
+  }
+
   async setPower(state, cb) {
-    power = state ? 1 : 0;
-    try {
-      await setLEDPanel(this.log)
-    } catch (error) {
-      this.log.error(error);
+    if (state) {
+      ledPanel.on();
+    } else {
+      ledPanel.off();
     }
-    cb(null, power);
+    cb(null, ledPanel.power);
   }
 
   async setBrightness(level, cb) {
-    brightness = level;
-    try {
-      await setLEDPanel(this.log)
-    } catch (error) {
-      this.log.error(error);
-    }
-    cb(null, brightness);
+    color.setValue(level / 100);
+    ledPanel.fill(color);
+    cb(null, color.value * 100);
   }
 
   async setSaturation(level, cb) {
-    saturation = level;
-    try {
-      await setLEDPanel(this.log)
-    } catch (error) {
-      this.log.error(error);
-    }
-    cb(null, saturation);
+    color.setSaturation(level / 100);
+    ledPanel.fill(color);
+    cb(null, color.saturation * 100);
   }
 
   async setHue(level, cb) {
-    hue = level;
-    try {
-      await setLEDPanel(this.log)
-    } catch (error) {
-      this.log.error(error);
-    }
-    cb(null, hue);
+    color.setHue(level / 360);
+    ledPanel.fill(color);
+    cb(null, color.hue * 360);
+  }
+
+  getBlinker(cb) {
+    cb(null, ledPanel.isBlinking);
   }
 
   getPower(cb) {
-    cb(null, power);
+    cb(null, ledPanel.power);
   }
 
   getBrightness(cb) {
-    cb(null, brightness);
+    cb(null, color.value * 100);
   }
 
   getSaturation(cb) {
-    cb(null, saturation);
+    cb(null, color.saturation * 100);
   }
 
   getHue(cb) {
-    cb(null, hue);
+    cb(null, color.hue * 360);
   }
+
+  /**
+   * @description To make sure the LED panel doesn't turn off below a brightness of 20.
+   * 
+   * @returns {number}
+   */
+  // encodeBrightness(x) {
+  //   return (x / 100 * 81) + 19;
+  // }
+
+  // decodeBrightness(x) {
+  //   return (x / 119 * 100) - 19;
+  // }
 
   getServices() {
     const info = new Service.AccessoryInformation()
       .setCharacteristic(Characteristic.Manufacturer, "Lawrence Bensaid")
       .setCharacteristic(Characteristic.Model, "Sense HAT - LED Panel")
       .setCharacteristic(Characteristic.SerialNumber, "08C0D57A6414");
-    return [info, this.ledsService];
+    const services = [info, this.ledsService];
+    if (this.blinkerService) {
+      services.push(this.blinkerService);
+    }
+    return services;
   }
 
 }
@@ -254,35 +315,13 @@ function readSensors(log) {
         return;
       }
       const values = `${stdout}`.split(" ");
-      const temperature_ = parseFloat(values[1]);
+      const temperature_ = parseFloat(values[0]);
       const humidity_ = parseFloat(values[1]);
       const pressure_ = parseFloat(values[2]) - 1000;
-      if (temperature_ && temperature_ > 0) temperature = temperature_;
+      if (temperature_ && temperature_ > 0 && temperature_ < 100) temperature = temperature_;
       if (humidity_ && humidity_ > 0) humidity = humidity_;
       if (pressure_ && pressure_ > 0) pressure = pressure_;
       log.info(`temperature: ${temperature}; humidity: ${humidity}; pressure: ${pressure}`);
-      resolve();
-    });
-  });
-}
-
-
-/**
- * @description Sets the LED panel according to specified values.
- * 
- * @param {function} log 
- * @returns {Promise}
- */
-function setLEDPanel(log) {
-  return new Promise((resolve, reject) => {
-    log.info(`power: ${power ? "ON" : "OFF"}; brightness: ${brightness}; hue: ${hue}; sat: ${saturation}`);
-    const adjustedBrightness = (brightness / 100 * 81) + 19; // To make sure the LED panel doesn't turn off below a brightness of 20.
-    const cmd = `python ${path}/update-ledpanel.py ${hue} ${saturation} ${adjustedBrightness} ${power}`;
-    exec(cmd, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
-      }
       resolve();
     });
   });
@@ -299,4 +338,157 @@ module.exports = api => {
   api.registerAccessory("SenseHatThermometer", SenseHatThermometer);
   api.registerAccessory("SenseHatSensors", SenseHatSensors);
 
+};
+
+
+/**
+ * @author Lawrence Bensaid <lawrencebensaid@icloud.com>
+ * 
+ * @description
+ */
+class LEDPanel {
+
+  constructor(hat) {
+    this.hat = hat;
+    this.power = true;
+    this.state = Color.green;
+    this.isBlinking = false;
+  }
+
+  blink(state = true, delay = 500) {
+    this.isBlinking = state;
+    clearInterval(this.interval);
+    if (state) {
+      this.interval = setInterval(() => {
+        blink = !blink;
+        this.hat.clear(blink ? this.state.rgb().map(x => Math.round(x * 255)) : [0, 0, 0]);
+      }, delay);
+    } else {
+      blink = null;
+      this.interval = null;
+    }
+  }
+
+  off() {
+    this.power = false;
+    this.hat.clear(0, 0, 0);
+  }
+
+  on() {
+    if (!(this.state instanceof Color)) {
+      this.state = Color.white;
+    }
+    this.power = true;
+    this.hat.clear(this.state.rgb().map(x => Math.round(x * 255)));
+  }
+
+  /**
+   * @param {Color} color 
+   */
+  fill(color) {
+    if (!(color instanceof Color)) return;
+    this.state = color;
+    this.hat.clear(color.rgb().map(x => Math.round(x * 255)));
+  }
+
+  /**
+   * @param {Int} x 
+   * @param {Int} y 
+   * @param {Color} color 
+   */
+  setPixel(x, y, color) {
+    this.hat.setPixel(x, y, color.rgb().map(x => Math.round(x * 255)));
+  }
+
+}
+
+
+/**
+ * @author Lawrence Bensaid <lawrencebensaid@icloud.com>
+ * 
+ * @description All values are on the scale of 0.0 to 1.0.
+ */
+class Color {
+
+  constructor(hue, saturation, value) {
+    this.setHSV(hue, saturation, value);
+  }
+
+  setHSV(hue = 0, saturation = 0, value = 0) {
+    this.hue = hue;
+    this.saturation = saturation;
+    this.value = value;
+    var r, g, b, i, f, p, q, t;
+    i = Math.floor(hue * 6);
+    f = hue * 6 - i;
+    p = value * (1 - saturation);
+    q = value * (1 - f * saturation);
+    t = value * (1 - (1 - f) * saturation);
+    switch (i % 6) {
+      case 0: r = value, g = t, b = p; break;
+      case 1: r = q, g = value, b = p; break;
+      case 2: r = p, g = value, b = t; break;
+      case 3: r = p, g = q, b = value; break;
+      case 4: r = t, g = p, b = value; break;
+      case 5: r = value, g = p, b = q; break;
+    }
+    this.red = r;
+    this.green = g;
+    this.blue = b;
+  }
+
+  setHue(hue) {
+    this.setHSV(hue, this.saturation, this.value);
+  }
+
+  setSaturation(saturation) {
+    this.setHSV(this.hue, saturation, this.value);
+  }
+
+  setValue(value) {
+    this.setHSV(this.hue, this.saturation, value);
+  }
+
+  hsv() {
+    return [this.hue, this.saturation, this.value];
+  }
+
+  rgb() {
+    return [this.red, this.green, this.blue];
+  }
+
+}
+
+Color.black = new Color(0, 0, 0);
+Color.white = new Color(0, 0, 1);
+Color.red = new Color(0, 1, 1);
+Color.green = new Color(120 / 360, 1, 1);
+Color.blue = new Color(240 / 360, 1, 1);
+Color.yellow = new Color(60 / 360, 1, 1);
+Color.magenta = new Color(300 / 360, 1, 1);
+Color.cyan = new Color(.5, 1, 1);
+
+Color.hsvToRgb = (h, s, v) => {
+  var r, g, b, i, f, p, q, t;
+  if (arguments.length === 1) {
+    s = h.s, v = h.v, h = h.h;
+  }
+  i = Math.floor(h * 6);
+  f = h * 6 - i;
+  p = v * (1 - s);
+  q = v * (1 - f * s);
+  t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: r = v, g = t, b = p; break;
+    case 1: r = q, g = v, b = p; break;
+    case 2: r = p, g = v, b = t; break;
+    case 3: r = p, g = q, b = v; break;
+    case 4: r = t, g = p, b = v; break;
+    case 5: r = v, g = p, b = q; break;
+  }
+  return {
+    r: Math.round(r * 255),
+    g: Math.round(g * 255),
+    b: Math.round(b * 255)
+  };
 };

@@ -23,6 +23,7 @@ name|description
 ---|---
 accessory|Options are `SenseHatLight`, `SenseHatThermometer` or `SenseHatSensors`. ****Required***
 name|A name for the accessory. **Not required*
+blinker|Set to `true` to add a Switch accessory to enable or disable blinking. **Not required*
 
 Configuration example:
 
