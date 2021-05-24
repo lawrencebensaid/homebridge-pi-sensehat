@@ -1,0 +1,35 @@
+{
+  "name": "homebridge-pi-sensehat",
+  "version": "1.0.0-0",
+  "description": "A Homebridge plugin for the Sense HAT module for Raspberry Pi",
+  "author": {
+    "name": "Lawrence Bensaid",
+    "email": "lawrencebensaid@icloud.com"
+  },
+  "homepage": "https://github.com/lawrencebensaid/homebridge-pi-sensehat#readme",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/lawrencebensaid/homebridge-pi-sensehat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lawrencebensaid/homebridge-pi-sensehat/issues"
+  },
+  "engines": {
+    "homebridge": ">=0.2.0",
+    "node": ">=6.0.0"
+  },
+  "main": "index.js",
+  "keywords": [
+    "homebridge-plugin",
+    "sensehat",
+    "temperature",
+    "humidity",
+    "pressure",
+    "sensor",
+    "lamp"
+  ],
+  "bundledDependencies": false,
+  "dependencies": {
+    "hap-nodejs-community-types": "git+https://github.com/homespun/hap-nodejs-community-types.git"
+  }
+}
